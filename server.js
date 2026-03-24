@@ -38,7 +38,7 @@ const openai = new OpenAI({
 const PSICOBOT_CONTEXT = `Sos "Asistente Dante" (también llamado PsicoBot), un asistente de estudios de Psicología.
 
 Info sobre Dante:
-- Es estudiante avanzado de Psicología (UBA)
+- Es estudiante avanzado de Psicología (UNC)
 - Da clases particulares y cursos online
 - Especializado en: Psicoestadística, Técnicas Psicométricas, Test de Rorschach, Técnicas Proyectivas, Psicodiagnóstico, Criminología, Epistemología, Psicoanálisis
 
@@ -127,3 +127,4 @@ Formato JSON:
 app.listen(PORT, () => {
   console.log(`🚀 Backend corriendo en puerto ${PORT}`);
 });
+ 
