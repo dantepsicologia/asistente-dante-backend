@@ -2,11 +2,8 @@ const express = require('express');
 const cors = require('cors');
 const OpenAI = require('openai');
 const { google } = require('googleapis');
-const nodemailer = require('nodemailer');
-const twilio = require('twilio');
-const { v4: uuidv4 } = require('uuid');
 const axios = require('axios');
-const path = require('path');
+const { v4: uuidv4 } = require('uuid');
 const fs = require('fs');
 require('dotenv').config();
 
@@ -51,18 +48,9 @@ const openai = new OpenAI({
 // CONFIGURACIÓN GOOGLE DRIVE
 // ==========================================
 
-// Cargar credenciales de servicio
 let driveAuth;
 try {
-  const credentialsPath = process.env.GOOGLE_CREDENTIALS_PATH || './google-credentials.json';
-  
-  // Si existe archivo, lo usamos. Si no, usamos variable de entorno
-  if (fs.existsSync(credentialsPath)) {
-    driveAuth = new google.auth.GoogleAuth({
-      keyFile: credentialsPath,
-      scopes: ['https://www.googleapis.com/auth/drive']
-    });
-  } else if (process.env.GOOGLE_CREDENTIALS_JSON) {
+  if (process.env.GOOGLE_CREDENTIALS_JSON) {
     const credentials = JSON.parse(process.env.GOOGLE_CREDENTIALS_JSON);
     driveAuth = new google.auth.GoogleAuth({
       credentials,
@@ -70,7 +58,7 @@ try {
     });
   }
 } catch (error) {
-  console.error('Error configurando Google Drive:', error);
+  console.error('Error configurando Google Drive:', error.message);
 }
 
 const drive = driveAuth ? google.drive({ version: 'v3', auth: driveAuth }) : null;
@@ -85,7 +73,6 @@ const COURSE_FOLDERS = {
   'rorschach': '1yLSz-6N64l3DuXIlhkJ0Z0AGQs6TMwuB'
 };
 
-// Mapeo de nombres de curso a IDs
 const getCourseFolderId = (courseName) => {
   const normalized = courseName.toLowerCase()
     .normalize('NFD')
@@ -99,7 +86,14 @@ const getCourseFolderId = (courseName) => {
 };
 
 // ==========================================
-// CONFIGURACIÓN EMAIL (Formspree)
+// BASE DE DATOS EN MEMORIA
+// ==========================================
+
+const pendingActivations = new Map();
+const activatedStudents = [];
+
+// ==========================================
+// FUNCIONES AUXILIARES
 // ==========================================
 
 const sendActivationEmail = async (toEmail, token, courseName, duration) => {
@@ -107,7 +101,7 @@ const sendActivationEmail = async (toEmail, token, courseName, duration) => {
     const activationUrl = `${process.env.FRONTEND_URL || 'https://clasesdante.com'}/activar?token=${token}`;
     
     await axios.post('https://formspree.io/f/mreozevn', {
-      _subject: `🎓 Activá tu acceso a ${courseName}`,
+      _subject: `Activá tu acceso a ${courseName}`,
       email: toEmail,
       message: `¡Gracias por tu compra!\n\nCurso: ${courseName}\nDuración: ${duration}\n\nPara activar tu acceso al curso, hacé click en el siguiente link:\n👉 ${activationUrl}\n\nSi no solicitaste este acceso, ignorá este email.\n\nSaludos,\nDante - ClasesDante.com`,
       _replyto: 'info@clasesdante.com'
@@ -121,37 +115,7 @@ const sendActivationEmail = async (toEmail, token, courseName, duration) => {
 };
 
 // ==========================================
-// CONFIGURACIÓN WHATSAPP (Twilio)
-// ==========================================
-
-const sendWhatsAppNotification = async (message) => {
-  try {
-    if (!process.env.TWILIO_SID || !process.env.TWILIO_TOKEN) {
-      console.log('WhatsApp not configured:', message);
-      return;
-    }
-    
-    const client = twilio(process.env.TWILIO_SID, process.env.TWILIO_TOKEN);
-    
-    await client.messages.create({
-      body: message,
-      from: 'whatsapp:+14155238886',
-      to: 'whatsapp:+5493544577649'
-    });
-  } catch (error) {
-    console.error('Error enviando WhatsApp:', error.message);
-  }
-};
-
-// ==========================================
-// BASE DE DATOS EN MEMORIA
-// ==========================================
-
-const pendingActivations = new Map();
-const activatedStudents = [];
-
-// ==========================================
-// CONTEXTO DEL PSICOBOT
+// CONTEXTO DEL PSICOBOT (ACTUALIZADO)
 // ==========================================
 
 const PSICOBOT_CONTEXT = `Sos "Asistente Dante" (también llamado PsicoBot), un asistente de estudios de Psicología.
@@ -192,7 +156,7 @@ TONO:
 - Nunca sonés desesperado por vender - que la venta fluya natural`;
 
 // ==========================================
-// ENDPOINTS ORIGINALES
+// ENDPOINTS ORIGINALES (SIN MODIFICAR)
 // ==========================================
 
 app.get('/health', (req, res) => {
@@ -293,19 +257,11 @@ app.post('/webhook/mercadopago', async (req, res) => {
     
     if (type === 'payment' && data && data.id) {
       const paymentId = data.id;
-      
-      const { 
-        status, 
-        payer, 
-        transaction_amount,
-        additional_info 
-      } = req.body;
-      
+      const { status, payer, transaction_amount, additional_info } = req.body;
       const payerEmail = payer?.email || 'no-email@example.com';
       
       if (status === 'approved') {
         const token = uuidv4();
-        
         const courseName = additional_info?.items?.[0]?.title || 'Curso de Psicología';
         const duration = '3 meses';
         
@@ -320,17 +276,11 @@ app.post('/webhook/mercadopago', async (req, res) => {
         });
         
         await sendActivationEmail(payerEmail, token, courseName, duration);
-        
-        await sendWhatsAppNotification(
-          `🎉 Nueva compra!\n💰 $${transaction_amount}\n📚 ${courseName}\n⏱️ ${duration}\n📧 ${payerEmail}`
-        );
-        
         console.log('Pago aprobado. Token:', token);
       }
     }
     
     res.status(200).send('OK');
-    
   } catch (error) {
     console.error('Error en webhook:', error);
     res.status(200).send('OK');
@@ -397,12 +347,9 @@ app.post('/api/activar/:token', async (req, res) => {
     
     activatedStudents.push(activation);
     
-    await sendWhatsAppNotification(
-      `✅ Curso activado!\n👤 ${studentName}\n📧 ${studentEmail}\n📚 ${activation.courseName}`
-    );
-    
+    // Email al estudiante
     await axios.post('https://formspree.io/f/mreozevn', {
-      _subject: `🎓 Acceso activado: ${activation.courseName}`,
+      _subject: `Acceso activado: ${activation.courseName}`,
       email: studentEmail,
       message: `¡Hola ${studentName}!\n\nTu acceso al curso ya está activado:\n\n📚 ${activation.courseName}\n⏱️ Duración: ${activation.duration}\n\nAccedé a tu material acá:\nhttps://drive.google.com/drive/folders/${folderId}\n\nIMPORTANTE: Tenés permiso de LECTURA (ver videos online).\n\n¿Dudas? WhatsApp: +5493544577649\n\n¡Éxitos! 📚\n\nDante - ClasesDante.com`,
       _replyto: 'info@clasesdante.com'
@@ -439,7 +386,6 @@ app.get('/admin/pendientes', (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`🚀 Backend corriendo en puerto ${PORT}`);
-  console.log(`📅 ${new Date().toISOString()}`);
   if (drive) {
     console.log('✅ Google Drive conectado');
   } else {
