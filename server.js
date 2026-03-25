@@ -7,6 +7,12 @@ const { v4: uuidv4 } = require('uuid');
 const fs = require('fs');
 require('dotenv').config();
 
+// MercadoPago SDK
+const { MercadoPagoConfig, Preference } = require('mercadopago');
+const mpClient = new MercadoPagoConfig({ 
+  accessToken: process.env.MERCADOPAGO_ACCESS_TOKEN 
+});
+
 const app = express();
 const PORT = process.env.PORT || 3001;
 
@@ -383,6 +389,42 @@ app.get('/admin/pendientes', (req, res) => {
 // ==========================================
 // INICIAR SERVIDOR
 // ==========================================
+// Crear preferencia de pago
+app.post('/api/crear-preferencia', async (req, res) => {
+  try {
+    const { curso, duracion, precio } = req.body;
+    
+    const preference = new Preference(mpClient);
+    
+    const result = await preference.create({
+      body: {
+        items: [
+          {
+            title: `${curso} - ${duracion}`,
+            unit_price: precio,
+            quantity: 1,
+            currency_id: 'ARS'
+          }
+        ],
+        back_urls: {
+          success: 'https://clasesdante.com/activar',
+          failure: 'https://clasesdante.com/activar',
+          pending: 'https://clasesdante.com/activar'
+        },
+        auto_return: 'approved',
+        notification_url: 'https://asistente-dante-backend.onrender.com/webhook/mercadopago'
+      }
+    });
+    
+    res.json({
+      init_point: result.init_point
+    });
+    
+  } catch (error) {
+    console.error('Error:', error);
+    res.status(500).json({ error: 'Error al crear preferencia' });
+  }
+});
 
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Backend corriendo en puerto ${PORT}`);
