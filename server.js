@@ -1,10 +1,20 @@
 const express = require('express');
 const cors = require('cors');
 const OpenAI = require('openai');
+const { google } = require('googleapis');
+const nodemailer = require('nodemailer');
+const twilio = require('twilio');
+const { v4: uuidv4 } = require('uuid');
+const path = require('path');
+const fs = require('fs');
 require('dotenv').config();
 
 const app = express();
 const PORT = process.env.PORT || 3001;
+
+// ==========================================
+// CONFIGURACIÓN INICIAL
+// ==========================================
 
 // Orígenes permitidos
 const ALLOWED_ORIGINS = [
@@ -31,9 +41,136 @@ app.use(cors({
 
 app.use(express.json());
 
+// OpenAI
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
+
+// ==========================================
+// CONFIGURACIÓN GOOGLE DRIVE
+// ==========================================
+
+// Cargar credenciales de servicio
+let driveAuth;
+try {
+  const credentialsPath = process.env.GOOGLE_CREDENTIALS_PATH || './google-credentials.json';
+  
+  // Si existe archivo, lo usamos. Si no, usamos variable de entorno
+  if (fs.existsSync(credentialsPath)) {
+    driveAuth = new google.auth.GoogleAuth({
+      keyFile: credentialsPath,
+      scopes: ['https://www.googleapis.com/auth/drive']
+    });
+  } else if (process.env.GOOGLE_CREDENTIALS_JSON) {
+    const credentials = JSON.parse(process.env.GOOGLE_CREDENTIALS_JSON);
+    driveAuth = new google.auth.GoogleAuth({
+      credentials,
+      scopes: ['https://www.googleapis.com/auth/drive']
+    });
+  }
+} catch (error) {
+  console.error('Error configurando Google Drive:', error);
+}
+
+const drive = driveAuth ? google.drive({ version: 'v3', auth: driveAuth }) : null;
+
+// IDs de carpetas de cursos
+const COURSE_FOLDERS = {
+  'psicoestadistica': '1v7rfRVoKmLRpYXcSzh-tGjnayhq1mIUB',
+  'psicometricas-a': '1G4Fh3YSWgE_C7zggn8_4F45KmXUlu5EQ',
+  'psicometricas-b': '1rBTU5cE8_zH_zLkEBy426Ez0k3Fptwdk',
+  'criminologia': '1LCdOgNruPevBhGywV-Aoz7I6UaHlotJQ',
+  'proyectivas': '1rgOjWLu8z9sW4ewWIP4BQKrzCaRpX1U1',
+  'rorschach': '1yLSz-6N64l3DuXIlhkJ0Z0AGQs6TMwuB'
+};
+
+// Mapeo de nombres de curso a IDs
+const getCourseFolderId = (courseName) => {
+  const normalized = courseName.toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]/g, '-');
+  
+  for (const [key, id] of Object.entries(COURSE_FOLDERS)) {
+    if (normalized.includes(key)) return id;
+  }
+  return null;
+};
+
+// ==========================================
+// CONFIGURACIÓN EMAIL (Formspree o SMTP)
+// ==========================================
+
+// Usamos Formspree para enviar emails (simple, confiable)
+const sendActivationEmail = async (toEmail, token, courseName, duration) => {
+  try {
+    const activationUrl = `${process.env.FRONTEND_URL || 'https://clasesdante.com'}/activar?token=${token}`;
+    
+    const response = await fetch('https://formspree.io/f/mreozevn', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        _subject: `🎓 Activá tu acceso a ${courseName}`,
+        email: toEmail,
+        message: `
+¡Gracias por tu compra!
+
+Curso: ${courseName}
+Duración: ${duration}
+
+Para activar tu acceso al curso, hacé click en el siguiente link:
+👉 ${activationUrl}
+
+Si no solicitaste este acceso, ignorá este email.
+
+Saludos,
+Dante - ClasesDante.com
+        `,
+        _replyto: 'info@clasesdante.com'
+      })
+    });
+    
+    return response.ok;
+  } catch (error) {
+    console.error('Error enviando email:', error);
+    return false;
+  }
+};
+
+// ==========================================
+// CONFIGURACIÓN WHATSAPP (Twilio)
+// ==========================================
+
+const sendWhatsAppNotification = async (message) => {
+  try {
+    if (!process.env.TWILIO_SID || !process.env.TWILIO_TOKEN) {
+      console.log('WhatsApp not configured, logging to console:', message);
+      return;
+    }
+    
+    const client = twilio(process.env.TWILIO_SID, process.env.TWILIO_TOKEN);
+    
+    await client.messages.create({
+      body: message,
+      from: 'whatsapp:+14155238886', // Número de Twilio Sandbox
+      to: 'whatsapp:+5493544577649'
+    });
+  } catch (error) {
+    console.error('Error enviando WhatsApp:', error);
+  }
+};
+
+// ==========================================
+// BASE DE DATOS EN MEMORIA (Temporal)
+// En producción, usar MongoDB o similar
+// ==========================================
+
+const pendingActivations = new Map(); // token -> datos
+const activatedStudents = []; // historial
+
+// ==========================================
+// CONTEXTO DEL PSICOBOT (TU CÓDIGO ORIGINAL)
+// ==========================================
 
 const PSICOBOT_CONTEXT = `Sos "Asistente Dante" (también llamado PsicoBot), un asistente de estudios de Psicología.
 
@@ -53,11 +190,10 @@ MATERIAS DISPONIBLES:
 8. Clases en vivo con Dante
 
 PRECIOS CURSOS:
-- Intensivo: $37.999 ARS (~$53 USD) - 3 meses de acceso
-- Extensivo 3 meses: $67.999 ARS (~$95 USD)
-- Extensivo 6 meses: $89.999 ARS (~$126 USD) 
-- Extensivo 12 meses: $109.999 ARS (~$154 USD)
-- Transferencia bancaria: 15% de descuento en todos los precios
+- 3 meses: $69.999 ARS (~$69.99 USD)
+- 6 meses: $89.999 ARS (~$89.99 USD)
+- 12 meses: $92.999 ARS (~$92.99 USD)
+- Transferencia bancaria: 10% de descuento en todos los precios
 - Clases particulares: $29.999/hora ARS o $29 USD/hora
 
 METODOLOGÍA DE DANTE:
@@ -81,6 +217,10 @@ TONO:
 - Usá emojis ocasionales (😊, 📚, 🧠, 🎯, 💡)
 - Habla como un compañero de estudios que ya pasó por eso
 - Nunca sonés desesperado por vender - que la venta fluya natural`;
+
+// ==========================================
+// ENDPOINTS ORIGINALES (TU CÓDIGO - SIN TOCAR)
+// ==========================================
 
 // Health check
 app.get('/health', (req, res) => {
@@ -167,12 +307,4 @@ IMPORTANTE: Respondé SOLO con este formato JSON, sin texto adicional:
         pregunta: "¿Cuál es el objetivo principal de la Psicología?",
         opciones: ["A) Curar enfermedades mentales", "B) Comprender y explicar el comportamiento humano", "C) Prescribir medicamentos", "D) Realizar cirugías"],
         respuestaCorrecta: "B",
-        explicacion: "La psicología se define como la ciencia que estudia el comportamiento y los procesos mentales."
-      }
-    });
-  }
-});
-
-app.listen(PORT, () => {
-  console.log(`🚀 Backend corriendo en puerto ${PORT}`);
-});
+        explicacion: "La psicología se define
