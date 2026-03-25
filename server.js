@@ -384,7 +384,7 @@ app.get('/admin/pendientes', (req, res) => {
 // INICIAR SERVIDOR
 // ==========================================
 
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Backend corriendo en puerto ${PORT}`);
   if (drive) {
     console.log('✅ Google Drive conectado');
