@@ -5,6 +5,7 @@ const { google } = require('googleapis');
 const nodemailer = require('nodemailer');
 const twilio = require('twilio');
 const { v4: uuidv4 } = require('uuid');
+const axios = require('axios');
 const path = require('path');
 const fs = require('fs');
 require('dotenv').config();
@@ -98,41 +99,23 @@ const getCourseFolderId = (courseName) => {
 };
 
 // ==========================================
-// CONFIGURACIÓN EMAIL (Formspree o SMTP)
+// CONFIGURACIÓN EMAIL (Formspree)
 // ==========================================
 
-// Usamos Formspree para enviar emails (simple, confiable)
 const sendActivationEmail = async (toEmail, token, courseName, duration) => {
   try {
     const activationUrl = `${process.env.FRONTEND_URL || 'https://clasesdante.com'}/activar?token=${token}`;
     
-    const response = await fetch('https://formspree.io/f/mreozevn', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        _subject: `🎓 Activá tu acceso a ${courseName}`,
-        email: toEmail,
-        message: `
-¡Gracias por tu compra!
-
-Curso: ${courseName}
-Duración: ${duration}
-
-Para activar tu acceso al curso, hacé click en el siguiente link:
-👉 ${activationUrl}
-
-Si no solicitaste este acceso, ignorá este email.
-
-Saludos,
-Dante - ClasesDante.com
-        `,
-        _replyto: 'info@clasesdante.com'
-      })
+    await axios.post('https://formspree.io/f/mreozevn', {
+      _subject: `🎓 Activá tu acceso a ${courseName}`,
+      email: toEmail,
+      message: `¡Gracias por tu compra!\n\nCurso: ${courseName}\nDuración: ${duration}\n\nPara activar tu acceso al curso, hacé click en el siguiente link:\n👉 ${activationUrl}\n\nSi no solicitaste este acceso, ignorá este email.\n\nSaludos,\nDante - ClasesDante.com`,
+      _replyto: 'info@clasesdante.com'
     });
     
-    return response.ok;
+    return true;
   } catch (error) {
-    console.error('Error enviando email:', error);
+    console.error('Error enviando email:', error.message);
     return false;
   }
 };
@@ -144,7 +127,7 @@ Dante - ClasesDante.com
 const sendWhatsAppNotification = async (message) => {
   try {
     if (!process.env.TWILIO_SID || !process.env.TWILIO_TOKEN) {
-      console.log('WhatsApp not configured, logging to console:', message);
+      console.log('WhatsApp not configured:', message);
       return;
     }
     
@@ -152,24 +135,23 @@ const sendWhatsAppNotification = async (message) => {
     
     await client.messages.create({
       body: message,
-      from: 'whatsapp:+14155238886', // Número de Twilio Sandbox
+      from: 'whatsapp:+14155238886',
       to: 'whatsapp:+5493544577649'
     });
   } catch (error) {
-    console.error('Error enviando WhatsApp:', error);
+    console.error('Error enviando WhatsApp:', error.message);
   }
 };
 
 // ==========================================
-// BASE DE DATOS EN MEMORIA (Temporal)
-// En producción, usar MongoDB o similar
+// BASE DE DATOS EN MEMORIA
 // ==========================================
 
-const pendingActivations = new Map(); // token -> datos
-const activatedStudents = []; // historial
+const pendingActivations = new Map();
+const activatedStudents = [];
 
 // ==========================================
-// CONTEXTO DEL PSICOBOT (TU CÓDIGO ORIGINAL)
+// CONTEXTO DEL PSICOBOT
 // ==========================================
 
 const PSICOBOT_CONTEXT = `Sos "Asistente Dante" (también llamado PsicoBot), un asistente de estudios de Psicología.
@@ -203,15 +185,6 @@ METODOLOGÍA DE DANTE:
 - Atención personalizada por WhatsApp
 - Garantía de aprobación: si no entendés algo, Dante te lo explica de otra forma
 
-ESTRATEGIA DE VENTA (IMPORTANTE - ACTUÁ COMO ASESOR, NO COMO VENDEDOR):
-- Detectá la necesidad del estudiante: preguntá en qué materia está trabado/a, qué le cuesta más
-- Si menciona Técnicas Psicométricas, enfatizá que es la materia más difícil y que "muchos la recursan, pero con el curso se ahorran eso"
-- Si no sabe qué curso elegir, recomendá Psicoestadística como punto de partida ideal
-- Usá prueba social: "muchos estudiantes de la UNC...", "es el curso más elegido..."
-- Creá urgencia sutil: "las vacantes para clases particulares son limitadas", "el precio puede actualizarse"
-- Ofrecé el quiz interactivo para que practiquen y vean que necesitan reforzar
-- Siempre terminá con una pregunta de cierre: "¿Te gustaría que te pase el link del curso?" o "¿Querés que reservemos una clase particular para ver tus dudas específicas?"
-
 TONO:
 - Amigable, paciente, entusiasta pero profesional
 - Usá emojis ocasionales (😊, 📚, 🧠, 🎯, 💡)
@@ -219,15 +192,13 @@ TONO:
 - Nunca sonés desesperado por vender - que la venta fluya natural`;
 
 // ==========================================
-// ENDPOINTS ORIGINALES (TU CÓDIGO - SIN TOCAR)
+// ENDPOINTS ORIGINALES
 // ==========================================
 
-// Health check
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// Chat endpoint
 app.post('/api/chat', async (req, res) => {
   try {
     const { message, conversationHistory = [] } = req.body;
@@ -256,7 +227,6 @@ app.post('/api/chat', async (req, res) => {
   }
 });
 
-// Quiz endpoint - genera preguntas de opción múltiple
 app.post('/api/quiz', async (req, res) => {
   try {
     const { tema, dificultad = 'media' } = req.body;
@@ -289,7 +259,6 @@ IMPORTANTE: Respondé SOLO con este formato JSON, sin texto adicional:
 
     let response = completion.choices[0].message.content.trim();
     
-    // Limpiar posibles markdown
     if (response.startsWith('```json')) {
       response = response.replace(/```json\n?/, '').replace(/```$/, '').trim();
     } else if (response.startsWith('```')) {
@@ -307,4 +276,173 @@ IMPORTANTE: Respondé SOLO con este formato JSON, sin texto adicional:
         pregunta: "¿Cuál es el objetivo principal de la Psicología?",
         opciones: ["A) Curar enfermedades mentales", "B) Comprender y explicar el comportamiento humano", "C) Prescribir medicamentos", "D) Realizar cirugías"],
         respuestaCorrecta: "B",
-        explicacion: "La psicología se define
+        explicacion: "La psicología se define como la ciencia que estudia el comportamiento y los procesos mentales."
+      }
+    });
+  }
+});
+
+// ==========================================
+// NUEVOS ENDPOINTS - SISTEMA DE PAGOS
+// ==========================================
+
+// Webhook de MercadoPago
+app.post('/webhook/mercadopago', async (req, res) => {
+  try {
+    const { type, data } = req.body;
+    
+    if (type === 'payment' && data && data.id) {
+      const paymentId = data.id;
+      
+      const { 
+        status, 
+        payer, 
+        transaction_amount,
+        additional_info 
+      } = req.body;
+      
+      const payerEmail = payer?.email || 'no-email@example.com';
+      
+      if (status === 'approved') {
+        const token = uuidv4();
+        
+        const courseName = additional_info?.items?.[0]?.title || 'Curso de Psicología';
+        const duration = '3 meses';
+        
+        pendingActivations.set(token, {
+          payerEmail,
+          courseName,
+          duration,
+          amount: transaction_amount,
+          paymentId,
+          createdAt: new Date(),
+          activated: false
+        });
+        
+        await sendActivationEmail(payerEmail, token, courseName, duration);
+        
+        await sendWhatsAppNotification(
+          `🎉 Nueva compra!\n💰 $${transaction_amount}\n📚 ${courseName}\n⏱️ ${duration}\n📧 ${payerEmail}`
+        );
+        
+        console.log('Pago aprobado. Token:', token);
+      }
+    }
+    
+    res.status(200).send('OK');
+    
+  } catch (error) {
+    console.error('Error en webhook:', error);
+    res.status(200).send('OK');
+  }
+});
+
+// Verificar estado de activación
+app.get('/api/activacion/:token', (req, res) => {
+  const { token } = req.params;
+  const activation = pendingActivations.get(token);
+  
+  if (!activation) {
+    return res.status(404).json({ error: 'Token no encontrado o expirado' });
+  }
+  
+  if (activation.activated) {
+    return res.status(400).json({ error: 'Este curso ya fue activado' });
+  }
+  
+  res.json({
+    courseName: activation.courseName,
+    duration: activation.duration,
+    payerEmail: activation.payerEmail
+  });
+});
+
+// Activar curso
+app.post('/api/activar/:token', async (req, res) => {
+  try {
+    const { token } = req.params;
+    const { studentEmail, studentName } = req.body;
+    
+    const activation = pendingActivations.get(token);
+    
+    if (!activation) {
+      return res.status(404).json({ error: 'Token no válido' });
+    }
+    
+    if (activation.activated) {
+      return res.status(400).json({ error: 'Este curso ya fue activado' });
+    }
+    
+    const folderId = getCourseFolderId(activation.courseName);
+    
+    if (!folderId) {
+      return res.status(400).json({ error: 'Curso no encontrado' });
+    }
+    
+    if (drive) {
+      await drive.permissions.create({
+        fileId: folderId,
+        requestBody: {
+          role: 'reader',
+          type: 'user',
+          emailAddress: studentEmail
+        }
+      });
+    }
+    
+    activation.activated = true;
+    activation.studentEmail = studentEmail;
+    activation.studentName = studentName;
+    activation.activatedAt = new Date();
+    
+    activatedStudents.push(activation);
+    
+    await sendWhatsAppNotification(
+      `✅ Curso activado!\n👤 ${studentName}\n📧 ${studentEmail}\n📚 ${activation.courseName}`
+    );
+    
+    await axios.post('https://formspree.io/f/mreozevn', {
+      _subject: `🎓 Acceso activado: ${activation.courseName}`,
+      email: studentEmail,
+      message: `¡Hola ${studentName}!\n\nTu acceso al curso ya está activado:\n\n📚 ${activation.courseName}\n⏱️ Duración: ${activation.duration}\n\nAccedé a tu material acá:\nhttps://drive.google.com/drive/folders/${folderId}\n\nIMPORTANTE: Tenés permiso de LECTURA (ver videos online).\n\n¿Dudas? WhatsApp: +5493544577649\n\n¡Éxitos! 📚\n\nDante - ClasesDante.com`,
+      _replyto: 'info@clasesdante.com'
+    });
+    
+    res.json({ 
+      success: true, 
+      message: 'Curso activado correctamente',
+      folderUrl: `https://drive.google.com/drive/folders/${folderId}`
+    });
+    
+  } catch (error) {
+    console.error('Error activando curso:', error);
+    res.status(500).json({ error: 'Error al activar el curso' });
+  }
+});
+
+// Listar activaciones pendientes
+app.get('/admin/pendientes', (req, res) => {
+  const pending = Array.from(pendingActivations.entries())
+    .filter(([_, data]) => !data.activated)
+    .map(([token, data]) => ({
+      token,
+      ...data,
+      createdAt: data.createdAt.toISOString()
+    }));
+  
+  res.json(pending);
+});
+
+// ==========================================
+// INICIAR SERVIDOR
+// ==========================================
+
+app.listen(PORT, () => {
+  console.log(`🚀 Backend corriendo en puerto ${PORT}`);
+  console.log(`📅 ${new Date().toISOString()}`);
+  if (drive) {
+    console.log('✅ Google Drive conectado');
+  } else {
+    console.log('⚠️ Google Drive no configurado');
+  }
+});
